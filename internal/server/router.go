@@ -30,6 +30,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	videoRepo := repository.NewVideoRepository(pool)
 	counterRepo := repository.NewCounterRepository(pool)
 	analyticsRepo := repository.NewAnalyticsRepository(pool)
+	serviceRepo := repository.NewServiceRepository(pool)
 
 	// sse broker
 	broker := sse.NewBroker()
@@ -47,6 +48,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	userSvc := service.NewUserService(userRepo)
 	counterSvc := service.NewCounterService(counterRepo)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo)
+	serviceSvc := service.NewServiceService(serviceRepo)
 
 	// handlers
 	queueH := handler.NewQueueHandler(queueSvc)
@@ -55,6 +57,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	videoH := handler.NewVideoHandler(videoSvc)
 	userH := handler.NewUserHandler(userSvc)
 	analyticsH := handler.NewAnalyticsHandler(analyticsSvc)
+	serviceH := handler.NewServiceHandler(serviceSvc)
 	sseH := handler.NewSSEHandler(broker)
 
 	r := chi.NewRouter()
@@ -77,6 +80,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 		r.Post("/queues/{id}/rating", queueH.Rate)
 		r.Get("/counters", counterH.List)
 		r.Get("/videos", videoH.List)
+		r.Get("/services", serviceH.List)
 		r.Get("/stream", sseH.Stream)
 		r.Get("/sse/queues", sseH.Stream)
 
@@ -120,6 +124,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 			r.Patch("/videos/{id}", videoH.Update)
 			r.Delete("/videos/{id}", videoH.Delete)
 			r.Post("/videos/upload-signature", videoH.UploadSignature)
+
+			r.Get("/services/{key}", serviceH.Get)
+			r.Patch("/services/{key}", serviceH.Update)
 		})
 	})
 
