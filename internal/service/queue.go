@@ -28,7 +28,7 @@ func (s *QueueService) Get(ctx context.Context, id string) (*domain.Queue, error
 
 func (s *QueueService) Create(ctx context.Context, serviceType string) (*domain.Queue, error) {
 	serviceType = strings.ToUpper(strings.TrimSpace(serviceType))
-	if _, ok := domain.ServicePrefix(serviceType); !ok {
+	if serviceType == "" {
 		return nil, domain.ErrInvalidInput
 	}
 	q, err := s.repo.Create(ctx, serviceType)
@@ -50,9 +50,6 @@ func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, serv
 	}
 	if serviceType != "" {
 		serviceType = strings.ToUpper(strings.TrimSpace(serviceType))
-		if _, ok := domain.ServicePrefix(serviceType); !ok {
-			return nil, domain.ErrInvalidInput
-		}
 	}
 	q, err := s.repo.CallNext(ctx, counterID, userID, serviceType)
 	if err != nil {
@@ -62,14 +59,25 @@ func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, serv
 	return q, nil
 }
 
-// Recall re-emits the called event for an already-calling/serving ticket
-// without changing state. Used by the "Panggil Ulang" button.
+// Recall re-emits the called event for the "Panggil Ulang" button. An
+// already-calling/serving ticket is re-emitted without changing state; a
+// skipped ticket is brought back into the "calling" state so it can be
+// served again.
 func (s *QueueService) Recall(ctx context.Context, id string) (*domain.Queue, error) {
 	q, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if q.Status != domain.StatusCalling && q.Status != domain.StatusServing {
+	switch q.Status {
+	case domain.StatusCalling, domain.StatusServing:
+		// Already active: re-emit the called event without a state change.
+	case domain.StatusSkipped:
+		q, err = s.repo.UpdateStatus(ctx, id, domain.StatusCalling,
+			[]domain.QueueStatus{domain.StatusSkipped})
+		if err != nil {
+			return nil, err
+		}
+	default:
 		return nil, domain.ErrConflict
 	}
 	sse.PublishJSON(s.broker, "queue.called", q)

@@ -99,6 +99,67 @@ type ServicePatch struct {
 	DisplayOrder *int
 }
 
+type ServiceCreate struct {
+	Key          string
+	Code         string
+	Name         string
+	Description  string
+	Glyph        string
+	ColorBg      string
+	ColorFg      string
+	ColorBorder  string
+	SOPSteps     []string
+	SOPPDFURL    *string
+	QRURL        *string
+	AvgWaitMin   int
+	IsActive     bool
+	DisplayOrder int
+}
+
+func (r *ServiceRepository) Create(ctx context.Context, in ServiceCreate) (*domain.Service, error) {
+	stepsRaw, err := json.Marshal(in.SOPSteps)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO services (
+			key, code, name, description, glyph,
+			color_bg, color_fg, color_border,
+			sop_steps, sop_pdf_url, qr_url,
+			avg_wait_min, is_active, display_order, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+	`,
+		in.Key, in.Code, in.Name, in.Description, in.Glyph,
+		in.ColorBg, in.ColorFg, in.ColorBorder,
+		stepsRaw, in.SOPPDFURL, in.QRURL,
+		in.AvgWaitMin, in.IsActive, in.DisplayOrder,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, domain.ErrAlreadyExists
+		}
+		return nil, err
+	}
+	return r.Get(ctx, in.Key)
+}
+
+func (r *ServiceRepository) Delete(ctx context.Context, key string) error {
+	if _, err := r.Get(ctx, key); err != nil {
+		return err
+	}
+	var refCount int
+	if err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM queues WHERE service_type = $1`, key,
+	).Scan(&refCount); err != nil {
+		return err
+	}
+	if refCount > 0 {
+		return domain.ErrConflict
+	}
+	_, err := r.db.Exec(ctx, `DELETE FROM services WHERE key = $1`, key)
+	return err
+}
+
 func (r *ServiceRepository) Update(ctx context.Context, key string, p ServicePatch) (*domain.Service, error) {
 	if _, err := r.Get(ctx, key); err != nil {
 		return nil, err

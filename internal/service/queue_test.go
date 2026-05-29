@@ -105,14 +105,26 @@ func newQueueSvc(store *fakeQueueStore) (*QueueService, *capturingBroker) {
 	return NewQueueService(store, b), b
 }
 
-func TestQueueService_Create_RejectsInvalidServiceType(t *testing.T) {
+func TestQueueService_Create_RejectsBlankServiceType(t *testing.T) {
 	svc, broker := newQueueSvc(&fakeQueueStore{})
-	_, err := svc.Create(context.Background(), "INVALID")
+	_, err := svc.Create(context.Background(), "   ")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput, got %v", err)
 	}
 	if len(broker.events) != 0 {
 		t.Errorf("expected no events on validation failure")
+	}
+}
+
+func TestQueueService_Create_PropagatesRepoInvalidInput(t *testing.T) {
+	store := &fakeQueueStore{createErr: domain.ErrInvalidInput}
+	svc, broker := newQueueSvc(store)
+	_, err := svc.Create(context.Background(), "NONEXISTENT")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("repo ErrInvalidInput should bubble up, got %v", err)
+	}
+	if len(broker.events) != 0 {
+		t.Errorf("expected no events on repo failure")
 	}
 }
 
@@ -143,9 +155,6 @@ func TestQueueService_CallNext_ValidatesCounterAndUser(t *testing.T) {
 	}
 	if _, err := svc.CallNext(context.Background(), 1, "", ""); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Errorf("missing user should be unauthorized, got %v", err)
-	}
-	if _, err := svc.CallNext(context.Background(), 1, "u1", "BOGUS"); !errors.Is(err, domain.ErrInvalidInput) {
-		t.Errorf("bogus service should be invalid, got %v", err)
 	}
 	if len(broker.events) != 0 {
 		t.Errorf("validation failures must not publish events")
@@ -249,6 +258,31 @@ func TestQueueService_Recall_RejectsWaitingStatus(t *testing.T) {
 	}
 	if len(broker.events) != 0 {
 		t.Errorf("no event on conflict")
+	}
+}
+
+func TestQueueService_Recall_SkippedTransitionsToCalling(t *testing.T) {
+	store := &fakeQueueStore{
+		gotByID: &domain.Queue{ID: "q1", Status: domain.StatusSkipped},
+		updated: &domain.Queue{ID: "q1", Status: domain.StatusCalling},
+	}
+	svc, broker := newQueueSvc(store)
+
+	q, err := svc.Recall(context.Background(), "q1")
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if q.Status != domain.StatusCalling {
+		t.Errorf("status = %v, want calling", q.Status)
+	}
+	if store.lastUpdateStatus != domain.StatusCalling {
+		t.Errorf("update status = %v, want calling", store.lastUpdateStatus)
+	}
+	if len(store.lastUpdateAllowed) != 1 || store.lastUpdateAllowed[0] != domain.StatusSkipped {
+		t.Errorf("allowed = %v, want [skipped]", store.lastUpdateAllowed)
+	}
+	if got := broker.names(); len(got) != 1 || got[0] != "queue.called" {
+		t.Errorf("events = %v", got)
 	}
 }
 

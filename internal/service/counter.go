@@ -94,8 +94,5 @@ func normalizeService(s *string) (*string, error) {
 	if v == "" {
 		return nil, nil
 	}
-	if _, ok := domain.ServicePrefix(v); !ok {
-		return nil, domain.ErrInvalidInput
-	}
 	return &v, nil
 }

@@ -108,6 +108,65 @@ func (b *serviceBody) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type serviceCreateBody struct {
+	Key          string   `json:"key"`
+	Code         string   `json:"code"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Glyph        string   `json:"glyph"`
+	ColorBg      string   `json:"color_bg"`
+	ColorFg      string   `json:"color_fg"`
+	ColorBorder  string   `json:"color_border"`
+	SOPSteps     []string `json:"sop_steps"`
+	SOPPDFURL    *string  `json:"sop_pdf_url"`
+	QRURL        *string  `json:"qr_url"`
+	AvgWaitMin   int      `json:"avg_wait_min"`
+	IsActive     *bool    `json:"is_active"`
+	DisplayOrder int      `json:"display_order"`
+}
+
+func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var body serviceCreateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		badRequest(w, "Body JSON tidak valid")
+		return
+	}
+	active := true
+	if body.IsActive != nil {
+		active = *body.IsActive
+	}
+	in := service.ServiceCreateInput{
+		Key:          body.Key,
+		Code:         body.Code,
+		Name:         body.Name,
+		Description:  body.Description,
+		Glyph:        body.Glyph,
+		ColorBg:      body.ColorBg,
+		ColorFg:      body.ColorFg,
+		ColorBorder:  body.ColorBorder,
+		SOPSteps:     body.SOPSteps,
+		SOPPDFURL:    body.SOPPDFURL,
+		QRURL:        body.QRURL,
+		AvgWaitMin:   body.AvgWaitMin,
+		IsActive:     active,
+		DisplayOrder: body.DisplayOrder,
+	}
+	s, err := h.svc.Create(r.Context(), in)
+	if err != nil {
+		renderDomainError(w, err)
+		return
+	}
+	created(w, s)
+}
+
+func (h *ServiceHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "key")); err != nil {
+		renderDomainError(w, err)
+		return
+	}
+	ok(w, map[string]bool{"ok": true})
+}
+
 func (h *ServiceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body serviceBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

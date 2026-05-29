@@ -104,9 +104,16 @@ func (r *QueueRepository) Get(ctx context.Context, id string) (*domain.Queue, er
 // Uses a transaction-scoped advisory lock keyed by service_type+date to
 // serialize sequence allocation while letting other service types proceed.
 func (r *QueueRepository) Create(ctx context.Context, serviceType string) (*domain.Queue, error) {
-	prefix, ok := domain.ServicePrefix(serviceType)
-	if !ok {
+	var prefix string
+	err := r.db.QueryRow(ctx,
+		`SELECT code FROM services WHERE key = $1 AND is_active = true`,
+		serviceType,
+	).Scan(&prefix)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrInvalidInput
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})

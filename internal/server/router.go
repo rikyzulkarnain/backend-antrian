@@ -126,7 +126,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 			r.Post("/videos/upload-signature", videoH.UploadSignature)
 
 			r.Get("/services/{key}", serviceH.Get)
+			r.Post("/services", serviceH.Create)
 			r.Patch("/services/{key}", serviceH.Update)
+			r.Delete("/services/{key}", serviceH.Delete)
 		})
 	})
 
