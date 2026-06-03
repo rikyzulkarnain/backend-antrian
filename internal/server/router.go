@@ -4,6 +4,8 @@
 package server
 
 import (
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -51,6 +53,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo)
 	serviceSvc := service.NewServiceService(serviceRepo)
 	reportSvc := service.NewReportService(reportRepo)
+	ttsSvc := service.NewTTSService(service.TTSConfig{
+		Voice:    cfg.TTSVoice,
+		Language: cfg.TTSLanguage,
+	})
 
 	// handlers
 	queueH := handler.NewQueueHandler(queueSvc)
@@ -61,6 +67,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	analyticsH := handler.NewAnalyticsHandler(analyticsSvc)
 	serviceH := handler.NewServiceHandler(serviceSvc)
 	reportH := handler.NewReportHandler(reportSvc)
+	ttsH := handler.NewTTSHandler(ttsSvc)
 	sseH := handler.NewSSEHandler(broker)
 
 	r := chi.NewRouter()
@@ -88,6 +95,13 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 		r.Get("/services", serviceH.List)
 		r.Get("/stream", sseH.Stream)
 		r.Get("/sse/queues", sseH.Stream)
+
+		// Text-to-speech (ElevenLabs) untuk pengumuman antrian. Dibatasi
+		// agar tidak menghabiskan kuota: maks 60 permintaan / menit per IP.
+		r.Group(func(r chi.Router) {
+			r.Use(mw.NewRateLimiter(60, time.Minute).Middleware)
+			r.Get("/tts", ttsH.Speak)
+		})
 
 		// Staff + admin (any authenticated user) — queue operations.
 		r.Group(func(r chi.Router) {

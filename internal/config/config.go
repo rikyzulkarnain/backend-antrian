@@ -20,6 +20,8 @@ type Config struct {
 	CloudinaryUploadPreset string
 	CloudinaryUploadFolder string
 	CloudinaryUploadHook   string
+	TTSVoice               string
+	TTSLanguage            string
 }
 
 func Load() (*Config, error) {
@@ -37,6 +39,8 @@ func Load() (*Config, error) {
 		CloudinaryUploadPreset: os.Getenv("CLOUDINARY_UPLOAD_PRESET"),
 		CloudinaryUploadFolder: envOr("CLOUDINARY_UPLOAD_FOLDER", "sistem-antrian/videos"),
 		CloudinaryUploadHook:   os.Getenv("CLOUDINARY_UPLOAD_HOOK"),
+		TTSVoice:               os.Getenv("TTS_VOICE"),
+		TTSLanguage:            os.Getenv("TTS_LANGUAGE"),
 	}
 
 	if cfg.DatabaseURL == "" {
