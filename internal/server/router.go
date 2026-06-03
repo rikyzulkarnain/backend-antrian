@@ -31,6 +31,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	counterRepo := repository.NewCounterRepository(pool)
 	analyticsRepo := repository.NewAnalyticsRepository(pool)
 	serviceRepo := repository.NewServiceRepository(pool)
+	reportRepo := repository.NewReportRepository(pool)
 
 	// sse broker
 	broker := sse.NewBroker()
@@ -49,6 +50,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	counterSvc := service.NewCounterService(counterRepo)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo)
 	serviceSvc := service.NewServiceService(serviceRepo)
+	reportSvc := service.NewReportService(reportRepo)
 
 	// handlers
 	queueH := handler.NewQueueHandler(queueSvc)
@@ -58,6 +60,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 	userH := handler.NewUserHandler(userSvc)
 	analyticsH := handler.NewAnalyticsHandler(analyticsSvc)
 	serviceH := handler.NewServiceHandler(serviceSvc)
+	reportH := handler.NewReportHandler(reportSvc)
 	sseH := handler.NewSSEHandler(broker)
 
 	r := chi.NewRouter()
@@ -131,6 +134,11 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 			r.Post("/services", serviceH.Create)
 			r.Patch("/services/{key}", serviceH.Update)
 			r.Delete("/services/{key}", serviceH.Delete)
+
+			// Reports — filtered period analytics + Excel export.
+			r.Get("/reports", reportH.Report)
+			r.Get("/reports/skm-detail", reportH.SKMDetail)
+			r.Get("/reports/export.xlsx", reportH.ExportExcel)
 		})
 	})
 
