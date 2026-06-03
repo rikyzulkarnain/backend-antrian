@@ -24,7 +24,8 @@ SELECT q.id, q.queue_number, q.service_type, q.status,
        q.created_at, q.called_at, q.completed_at,
        q.counter_id, q.user_id, u.name AS staff,
        q.rating, q.feedback,
-       q.respondent_name, q.respondent_phone, q.issue_category
+       q.respondent_name, q.respondent_phone, q.issue_category,
+       q.guest_name, q.guest_purpose, q.guest_token
 FROM queues q
 LEFT JOIN users u ON u.id = q.user_id
 `
@@ -37,6 +38,7 @@ func scanQueue(row pgx.Row) (*domain.Queue, error) {
 		&q.CounterID, &q.UserID, &q.Staff,
 		&q.Rating, &q.Feedback,
 		&q.RespondentName, &q.RespondentPhone, &q.IssueCategory,
+		&q.GuestName, &q.GuestPurpose, &q.GuestToken,
 	)
 	if err != nil {
 		return nil, err
@@ -146,6 +148,89 @@ func (r *QueueRepository) Create(ctx context.Context, serviceType string) (*doma
 
 	var id string
 	if err := row.Scan(&id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return r.Get(ctx, id)
+}
+
+// GetByGuestToken returns the ticket linked to a Buku Tamu session token, or
+// ErrNotFound when the visitor has not submitted the form yet.
+func (r *QueueRepository) GetByGuestToken(ctx context.Context, token string) (*domain.Queue, error) {
+	row := r.db.QueryRow(ctx, queueSelect+" WHERE q.guest_token = $1", token)
+	q, err := scanQueue(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return q, err
+}
+
+// CreateGuest issues a ticket for the given service carrying the visitor's
+// name + purpose. Idempotent per guest_token: re-submitting the same token (e.g.
+// a double-tap or page refresh on the mobile form) returns the existing ticket
+// instead of allocating a second number.
+func (r *QueueRepository) CreateGuest(ctx context.Context, in domain.GuestInput) (*domain.Queue, error) {
+	serviceType := in.ServiceType
+
+	// Fast path: token already used → return the existing ticket.
+	if existing, err := r.GetByGuestToken(ctx, in.Token); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return nil, err
+	}
+
+	var prefix string
+	err := r.db.QueryRow(ctx,
+		`SELECT code FROM services WHERE key = $1 AND is_active = true`,
+		serviceType,
+	).Scan(&prefix)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrInvalidInput
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	lockKey := fmt.Sprintf("qseq:%s:%s", serviceType, "today")
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return nil, err
+	}
+
+	row := tx.QueryRow(ctx, `
+		WITH next_seq AS (
+		  SELECT COALESCE(
+		    MAX(
+		      CASE WHEN queue_number LIKE $1 || '-%' THEN
+		        NULLIF(SPLIT_PART(queue_number, '-', 2), '')::INTEGER
+		      END
+		    ), 0
+		  ) + 1 AS n
+		  FROM queues
+		  WHERE service_type = $2 AND created_at::date = CURRENT_DATE
+		)
+		INSERT INTO queues (queue_number, service_type, guest_name, guest_purpose, guest_token)
+		SELECT $1 || '-' || LPAD(n::TEXT, 2, '0'), $2, $3, $4, $5 FROM next_seq
+		ON CONFLICT (guest_token) DO NOTHING
+		RETURNING id
+	`, prefix, serviceType, in.Name, in.Purpose, in.Token)
+
+	var id string
+	if err := row.Scan(&id); err != nil {
+		// Lost a race on the unique guest_token: another request inserted it
+		// first. Roll back and return the winner's ticket.
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			return r.GetByGuestToken(ctx, in.Token)
+		}
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

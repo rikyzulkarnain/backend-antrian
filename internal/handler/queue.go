@@ -63,6 +63,45 @@ func (h *QueueHandler) Create(w http.ResponseWriter, r *http.Request) {
 	created(w, q)
 }
 
+type createGuestRequest struct {
+	ServiceType string `json:"service_type"`
+	Token       string `json:"token"`
+	Name        string `json:"name"`
+	Purpose     string `json:"purpose"`
+}
+
+// CreateGuest handles a Buku Tamu form submission from the visitor's phone.
+func (h *QueueHandler) CreateGuest(w http.ResponseWriter, r *http.Request) {
+	var body createGuestRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		badRequest(w, "Body JSON tidak valid")
+		return
+	}
+	q, err := h.svc.CreateGuest(r.Context(), domain.GuestInput{
+		ServiceType: body.ServiceType,
+		Token:       body.Token,
+		Name:        body.Name,
+		Purpose:     body.Purpose,
+	})
+	if err != nil {
+		renderDomainError(w, err)
+		return
+	}
+	created(w, q)
+}
+
+// GetGuest lets the kiosk poll for the ticket assigned to a guest session
+// token. Returns 404 until the visitor submits the form.
+func (h *QueueHandler) GetGuest(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	q, err := h.svc.GetByGuestToken(r.Context(), token)
+	if err != nil {
+		renderDomainError(w, err)
+		return
+	}
+	ok(w, q)
+}
+
 type callQueueRequest struct {
 	CounterID   int    `json:"counter_id"`
 	ServiceType string `json:"service_type"`

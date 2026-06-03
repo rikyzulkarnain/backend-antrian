@@ -13,18 +13,24 @@ import (
 
 // fakeQueueStore captures call args and returns scripted results.
 type fakeQueueStore struct {
-	created      *domain.Queue
-	calledNext   *domain.Queue
-	updated      *domain.Queue
-	rated        *domain.Queue
-	gotByID      *domain.Queue
-	createErr    error
-	callNextErr  error
-	updateErr    error
-	rateErr      error
-	getErr       error
-	listErr      error
+	created       *domain.Queue
+	guestCreated  *domain.Queue
+	gotByGuest    *domain.Queue
+	calledNext    *domain.Queue
+	updated       *domain.Queue
+	rated         *domain.Queue
+	gotByID       *domain.Queue
+	createErr     error
+	guestCreErr   error
+	guestGetErr   error
+	callNextErr   error
+	updateErr     error
+	rateErr       error
+	getErr        error
+	listErr       error
 
+	lastGuestInput    domain.GuestInput
+	lastGuestToken    string
 	lastCreateService string
 	lastCallCounter   int
 	lastCallUser      string
@@ -51,6 +57,20 @@ func (f *fakeQueueStore) Create(_ context.Context, serviceType string) (*domain.
 		return nil, f.createErr
 	}
 	return f.created, nil
+}
+func (f *fakeQueueStore) CreateGuest(_ context.Context, in domain.GuestInput) (*domain.Queue, error) {
+	f.lastGuestInput = in
+	if f.guestCreErr != nil {
+		return nil, f.guestCreErr
+	}
+	return f.guestCreated, nil
+}
+func (f *fakeQueueStore) GetByGuestToken(_ context.Context, token string) (*domain.Queue, error) {
+	f.lastGuestToken = token
+	if f.guestGetErr != nil {
+		return nil, f.guestGetErr
+	}
+	return f.gotByGuest, nil
 }
 func (f *fakeQueueStore) CallNext(_ context.Context, counterID int, userID, serviceType string) (*domain.Queue, error) {
 	f.lastCallCounter = counterID
@@ -144,6 +164,55 @@ func TestQueueService_Create_NormalizesAndPublishesEvent(t *testing.T) {
 	}
 	if got := broker.names(); len(got) != 1 || got[0] != "queue.created" {
 		t.Errorf("events = %v, want [queue.created]", got)
+	}
+}
+
+func TestQueueService_CreateGuest_RejectsMissingFields(t *testing.T) {
+	cases := []domain.GuestInput{
+		{ServiceType: "UMUM", Token: "", Name: "Budi", Purpose: "Rapat"},
+		{ServiceType: "UMUM", Token: "tok", Name: "  ", Purpose: "Rapat"},
+		{ServiceType: "UMUM", Token: "tok", Name: "Budi", Purpose: ""},
+		{ServiceType: "", Token: "tok", Name: "Budi", Purpose: "Rapat"},
+	}
+	for _, in := range cases {
+		svc, broker := newQueueSvc(&fakeQueueStore{})
+		if _, err := svc.CreateGuest(context.Background(), in); !errors.Is(err, domain.ErrInvalidInput) {
+			t.Errorf("CreateGuest(%+v): want ErrInvalidInput, got %v", in, err)
+		}
+		if len(broker.events) != 0 {
+			t.Errorf("validation failure must not publish events")
+		}
+	}
+}
+
+func TestQueueService_CreateGuest_TrimsAndPublishesEvent(t *testing.T) {
+	store := &fakeQueueStore{guestCreated: &domain.Queue{ID: "g1", QueueNumber: "F-01"}}
+	svc, broker := newQueueSvc(store)
+
+	q, err := svc.CreateGuest(context.Background(), domain.GuestInput{
+		ServiceType: " umum ",
+		Token:       " tok-1 ",
+		Name:        "  Budi Santoso ",
+		Purpose:     "  Mengantar dokumen ",
+	})
+	if err != nil {
+		t.Fatalf("CreateGuest: %v", err)
+	}
+	if q.ID != "g1" {
+		t.Errorf("returned id = %q", q.ID)
+	}
+	if store.lastGuestInput.ServiceType != "UMUM" || store.lastGuestInput.Token != "tok-1" || store.lastGuestInput.Name != "Budi Santoso" || store.lastGuestInput.Purpose != "Mengantar dokumen" {
+		t.Errorf("guest input not normalized: %+v", store.lastGuestInput)
+	}
+	if got := broker.names(); len(got) != 1 || got[0] != "queue.created" {
+		t.Errorf("events = %v, want [queue.created]", got)
+	}
+}
+
+func TestQueueService_GetByGuestToken_RejectsBlank(t *testing.T) {
+	svc, _ := newQueueSvc(&fakeQueueStore{})
+	if _, err := svc.GetByGuestToken(context.Background(), "  "); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("blank token: want ErrInvalidInput, got %v", err)
 	}
 }
 

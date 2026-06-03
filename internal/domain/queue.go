@@ -29,6 +29,21 @@ type Queue struct {
 	RespondentName  *string `json:"respondent_name,omitempty"`
 	RespondentPhone *string `json:"respondent_phone,omitempty"`
 	IssueCategory   *string `json:"issue_category,omitempty"`
+
+	// Buku Tamu (guest book) fields, populated only for service_type "TAMU".
+	GuestName    *string `json:"guest_name,omitempty"`
+	GuestPurpose *string `json:"guest_purpose,omitempty"`
+	GuestToken   *string `json:"guest_token,omitempty"`
+}
+
+// GuestInput is the validated payload accepted by QueueService.CreateGuest.
+// ServiceType is the queue service the visitor is registering for (any active
+// service, not only Buku Tamu).
+type GuestInput struct {
+	ServiceType string
+	Token       string
+	Name        string
+	Purpose     string
 }
 
 // RateInput is the validated payload accepted by QueueService.Rate. Lives in
@@ -57,6 +72,7 @@ var ValidServiceTypes = map[string]string{
 	"AMP":  "C",
 	"UTIL": "D",
 	"SEWA": "E",
+	"TAMU": "F",
 }
 
 func ServicePrefix(serviceType string) (string, bool) {

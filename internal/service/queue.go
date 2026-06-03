@@ -39,6 +39,42 @@ func (s *QueueService) Create(ctx context.Context, serviceType string) (*domain.
 	return q, nil
 }
 
+// CreateGuest issues a Buku Tamu ticket once the visitor submits the mobile
+// form (name + purpose). The token correlates the kiosk session with the
+// submission so the kiosk can pick up the assigned number.
+func (s *QueueService) CreateGuest(ctx context.Context, in domain.GuestInput) (*domain.Queue, error) {
+	in.ServiceType = strings.ToUpper(strings.TrimSpace(in.ServiceType))
+	in.Token = strings.TrimSpace(in.Token)
+	in.Name = strings.TrimSpace(in.Name)
+	in.Purpose = strings.TrimSpace(in.Purpose)
+	if in.ServiceType == "" || in.Token == "" || in.Name == "" || in.Purpose == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	if n := clipPtr(&in.Name, 120); n != nil {
+		in.Name = *n
+	}
+	if p := clipPtr(&in.Purpose, 300); p != nil {
+		in.Purpose = *p
+	}
+
+	q, err := s.repo.CreateGuest(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	sse.PublishJSON(s.broker, "queue.created", q)
+	return q, nil
+}
+
+// GetByGuestToken returns the ticket linked to a guest session token, used by
+// the kiosk to poll for the number after the visitor submits the form.
+func (s *QueueService) GetByGuestToken(ctx context.Context, token string) (*domain.Queue, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, domain.ErrInvalidInput
+	}
+	return s.repo.GetByGuestToken(ctx, token)
+}
+
 // CallNext picks the next waiting ticket for the given counter+staff.
 // serviceType is optional; pass "" for "any service".
 func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, serviceType string) (*domain.Queue, error) {

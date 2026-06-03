@@ -77,6 +77,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 		r.Get("/queues", queueH.List)
 		r.Get("/queues/{id}", queueH.Get)
 		r.Post("/queues", queueH.Create)
+		r.Post("/queues/guest", queueH.CreateGuest)
+		r.Get("/queues/guest/{token}", queueH.GetGuest)
 		r.Post("/queues/{id}/rating", queueH.Rate)
 		r.Get("/counters", counterH.List)
 		r.Get("/videos", videoH.List)
