@@ -53,7 +53,12 @@ func (h *SSEHandler) Stream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "data: %s\n\n", ev.Data)
 			flusher.Flush()
 		case <-heartbeat.C:
-			fmt.Fprintf(w, ": heartbeat\n\n")
+			// Emit a real (named) event, not a `:` comment. EventSource does
+			// not surface comments to JS, so the client can't tell a silently
+			// dead connection (TCP open, no data) from an idle one. A `ping`
+			// event lets the client's watchdog reset and force a reconnect
+			// when pings stop arriving.
+			fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
 			flusher.Flush()
 		}
 	}

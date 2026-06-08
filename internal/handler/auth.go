@@ -113,7 +113,7 @@ func (h *AuthHandler) setRefreshCookie(w http.ResponseWriter, token string) {
 		Path:     h.cookiePath,
 		HttpOnly: true,
 		Secure:   h.secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: h.sameSite(),
 		MaxAge:   int(h.svc.RefreshTokenTTL().Seconds()),
 	})
 }
@@ -125,7 +125,19 @@ func (h *AuthHandler) clearRefreshCookie(w http.ResponseWriter) {
 		Path:     h.cookiePath,
 		HttpOnly: true,
 		Secure:   h.secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: h.sameSite(),
 		MaxAge:   -1,
 	})
+}
+
+// sameSite picks the cookie SameSite policy. In production the frontend
+// (Vercel) and backend (Railway) live on different domains, so the refresh
+// cookie is sent on cross-site requests only with SameSite=None — which the
+// browser additionally requires to be Secure. Locally everything is same-site
+// over http://localhost, where Lax works and None would be dropped (no HTTPS).
+func (h *AuthHandler) sameSite() http.SameSite {
+	if h.secure {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
 }
