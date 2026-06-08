@@ -240,6 +240,23 @@ func (r *QueueRepository) CreateGuest(ctx context.Context, in domain.GuestInput)
 	return r.Get(ctx, id)
 }
 
+// CounterStaffID returns the staff user assigned to a counter. A nil string
+// means the counter exists but has no assigned operator. Returns ErrNotFound
+// when the counter does not exist.
+func (r *QueueRepository) CounterStaffID(ctx context.Context, counterID int) (*string, error) {
+	var staffID *string
+	err := r.db.QueryRow(ctx,
+		`SELECT staff_id FROM counters WHERE id = $1`, counterID,
+	).Scan(&staffID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return staffID, nil
+}
+
 // CallNext picks the oldest waiting ticket of any service type (or filtered
 // by serviceType when provided), transitions it to "calling", stamps the
 // counter/user/called_at, and returns it. Returns ErrNotFound when no

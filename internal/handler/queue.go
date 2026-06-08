@@ -119,7 +119,7 @@ func (h *QueueHandler) Call(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "Body JSON tidak valid")
 		return
 	}
-	q, err := h.svc.CallNext(r.Context(), body.CounterID, claims.UserID, body.ServiceType)
+	q, err := h.svc.CallNext(r.Context(), body.CounterID, claims.UserID, claims.Role, body.ServiceType)
 	if err != nil {
 		renderDomainError(w, err)
 		return

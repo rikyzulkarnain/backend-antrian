@@ -8,5 +8,7 @@ type Counter struct {
 	Service *string `json:"service"`
 	Active  bool    `json:"active"`
 	Staff   *string `json:"staff"`
-	StaffID *string `json:"-"`
+	// StaffID is the assigned loket operator. Exposed so the staff panel can
+	// bind a logged-in operator to their own counter (call-ownership check).
+	StaffID *string `json:"staff_id"`
 }

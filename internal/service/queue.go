@@ -77,12 +77,25 @@ func (s *QueueService) GetByGuestToken(ctx context.Context, token string) (*doma
 
 // CallNext picks the next waiting ticket for the given counter+staff.
 // serviceType is optional; pass "" for "any service".
-func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, serviceType string) (*domain.Queue, error) {
+//
+// A loket (staff) user may only call from the counter assigned to them
+// (counters.staff_id). Admins are exempt so they can operate any counter for
+// support or coverage. role is the caller's domain role ("admin"/"staff").
+func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, role, serviceType string) (*domain.Queue, error) {
 	if counterID <= 0 {
 		return nil, domain.ErrInvalidInput
 	}
 	if userID == "" {
 		return nil, domain.ErrUnauthorized
+	}
+	if role != string(domain.RoleAdmin) {
+		staffID, err := s.repo.CounterStaffID(ctx, counterID)
+		if err != nil {
+			return nil, err
+		}
+		if staffID == nil || *staffID != userID {
+			return nil, domain.ErrForbidden
+		}
 	}
 	if serviceType != "" {
 		serviceType = strings.ToUpper(strings.TrimSpace(serviceType))

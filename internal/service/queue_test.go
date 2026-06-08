@@ -13,21 +13,23 @@ import (
 
 // fakeQueueStore captures call args and returns scripted results.
 type fakeQueueStore struct {
-	created       *domain.Queue
-	guestCreated  *domain.Queue
-	gotByGuest    *domain.Queue
-	calledNext    *domain.Queue
-	updated       *domain.Queue
-	rated         *domain.Queue
-	gotByID       *domain.Queue
-	createErr     error
-	guestCreErr   error
-	guestGetErr   error
-	callNextErr   error
-	updateErr     error
-	rateErr       error
-	getErr        error
-	listErr       error
+	created      *domain.Queue
+	guestCreated *domain.Queue
+	gotByGuest   *domain.Queue
+	calledNext   *domain.Queue
+	updated      *domain.Queue
+	rated        *domain.Queue
+	gotByID      *domain.Queue
+	counterStaff *string
+	createErr    error
+	guestCreErr  error
+	guestGetErr  error
+	callNextErr  error
+	counterErr   error
+	updateErr    error
+	rateErr      error
+	getErr       error
+	listErr      error
 
 	lastGuestInput    domain.GuestInput
 	lastGuestToken    string
@@ -35,6 +37,7 @@ type fakeQueueStore struct {
 	lastCallCounter   int
 	lastCallUser      string
 	lastCallService   string
+	lastCounterLookup int
 	lastUpdateID      string
 	lastUpdateStatus  domain.QueueStatus
 	lastUpdateAllowed []domain.QueueStatus
@@ -80,6 +83,13 @@ func (f *fakeQueueStore) CallNext(_ context.Context, counterID int, userID, serv
 		return nil, f.callNextErr
 	}
 	return f.calledNext, nil
+}
+func (f *fakeQueueStore) CounterStaffID(_ context.Context, counterID int) (*string, error) {
+	f.lastCounterLookup = counterID
+	if f.counterErr != nil {
+		return nil, f.counterErr
+	}
+	return f.counterStaff, nil
 }
 func (f *fakeQueueStore) UpdateStatus(_ context.Context, id string, newStatus domain.QueueStatus, allowed []domain.QueueStatus) (*domain.Queue, error) {
 	f.lastUpdateID = id
@@ -219,10 +229,10 @@ func TestQueueService_GetByGuestToken_RejectsBlank(t *testing.T) {
 func TestQueueService_CallNext_ValidatesCounterAndUser(t *testing.T) {
 	svc, broker := newQueueSvc(&fakeQueueStore{})
 
-	if _, err := svc.CallNext(context.Background(), 0, "u1", ""); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := svc.CallNext(context.Background(), 0, "u1", "staff", ""); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("counter=0 should be invalid, got %v", err)
 	}
-	if _, err := svc.CallNext(context.Background(), 1, "", ""); !errors.Is(err, domain.ErrUnauthorized) {
+	if _, err := svc.CallNext(context.Background(), 1, "", "staff", ""); !errors.Is(err, domain.ErrUnauthorized) {
 		t.Errorf("missing user should be unauthorized, got %v", err)
 	}
 	if len(broker.events) != 0 {
@@ -231,10 +241,14 @@ func TestQueueService_CallNext_ValidatesCounterAndUser(t *testing.T) {
 }
 
 func TestQueueService_CallNext_PublishesQueueCalled(t *testing.T) {
-	store := &fakeQueueStore{calledNext: &domain.Queue{ID: "q1", Status: domain.StatusCalling}}
+	u := "u1"
+	store := &fakeQueueStore{
+		calledNext:   &domain.Queue{ID: "q1", Status: domain.StatusCalling},
+		counterStaff: &u, // counter 3 is assigned to u1
+	}
 	svc, broker := newQueueSvc(store)
 
-	q, err := svc.CallNext(context.Background(), 3, "u1", "lab")
+	q, err := svc.CallNext(context.Background(), 3, "u1", "staff", "lab")
 	if err != nil {
 		t.Fatalf("CallNext: %v", err)
 	}
@@ -251,15 +265,75 @@ func TestQueueService_CallNext_PublishesQueueCalled(t *testing.T) {
 }
 
 func TestQueueService_CallNext_EmptyReturnsNotFound(t *testing.T) {
-	store := &fakeQueueStore{callNextErr: domain.ErrNotFound}
+	u := "u1"
+	store := &fakeQueueStore{callNextErr: domain.ErrNotFound, counterStaff: &u}
 	svc, broker := newQueueSvc(store)
 
-	_, err := svc.CallNext(context.Background(), 1, "u1", "")
+	_, err := svc.CallNext(context.Background(), 1, "u1", "staff", "")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 	if len(broker.events) != 0 {
 		t.Errorf("no event should fire when queue empty")
+	}
+}
+
+// A staff user calling a counter assigned to a different operator is forbidden.
+func TestQueueService_CallNext_StaffRejectedOnForeignCounter(t *testing.T) {
+	other := "someone-else"
+	store := &fakeQueueStore{
+		calledNext:   &domain.Queue{ID: "q1", Status: domain.StatusCalling},
+		counterStaff: &other,
+	}
+	svc, broker := newQueueSvc(store)
+
+	_, err := svc.CallNext(context.Background(), 2, "u1", "staff", "")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("want ErrForbidden, got %v", err)
+	}
+	if store.lastCallCounter != 0 {
+		t.Errorf("CallNext repo must not run when ownership fails")
+	}
+	if len(broker.events) != 0 {
+		t.Errorf("forbidden call must not publish events")
+	}
+}
+
+// A staff user calling an unassigned counter (staff_id NULL) is forbidden.
+func TestQueueService_CallNext_StaffRejectedOnUnassignedCounter(t *testing.T) {
+	store := &fakeQueueStore{
+		calledNext:   &domain.Queue{ID: "q1", Status: domain.StatusCalling},
+		counterStaff: nil,
+	}
+	svc, _ := newQueueSvc(store)
+
+	_, err := svc.CallNext(context.Background(), 2, "u1", "staff", "")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Errorf("want ErrForbidden on unassigned counter, got %v", err)
+	}
+}
+
+// Admins bypass the ownership check and may call from any counter.
+func TestQueueService_CallNext_AdminBypassesOwnership(t *testing.T) {
+	other := "someone-else"
+	store := &fakeQueueStore{
+		calledNext:   &domain.Queue{ID: "q1", Status: domain.StatusCalling},
+		counterStaff: &other,
+	}
+	svc, broker := newQueueSvc(store)
+
+	q, err := svc.CallNext(context.Background(), 2, "admin-id", "admin", "")
+	if err != nil {
+		t.Fatalf("admin CallNext: %v", err)
+	}
+	if q.ID != "q1" {
+		t.Errorf("returned id = %q", q.ID)
+	}
+	if store.lastCounterLookup != 0 {
+		t.Errorf("admin path must not query counter ownership")
+	}
+	if got := broker.names(); len(got) != 1 || got[0] != "queue.called" {
+		t.Errorf("events = %v", got)
 	}
 }
 

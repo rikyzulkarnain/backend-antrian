@@ -24,6 +24,7 @@ type queueStore interface {
 	CreateGuest(ctx context.Context, in domain.GuestInput) (*domain.Queue, error)
 	GetByGuestToken(ctx context.Context, token string) (*domain.Queue, error)
 	CallNext(ctx context.Context, counterID int, userID, serviceType string) (*domain.Queue, error)
+	CounterStaffID(ctx context.Context, counterID int) (*string, error)
 	UpdateStatus(ctx context.Context, id string, newStatus domain.QueueStatus, allowed []domain.QueueStatus) (*domain.Queue, error)
 	Rate(ctx context.Context, id string, in domain.RateInput) (*domain.Queue, error)
 }
