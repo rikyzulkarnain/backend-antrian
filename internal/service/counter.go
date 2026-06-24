@@ -4,20 +4,34 @@ import (
 	"context"
 	"strings"
 
+	"github.com/bbpjn-sumsel/sistem-antrian/internal/cache"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/domain"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/repository"
 )
 
 type CounterService struct {
 	repo *repository.CounterRepository
+	// listCache serves the counter list (read by display/admin/mobile) from
+	// memory; invalidated on admin CRUD so the DB can stay suspended between
+	// changes. See package cache.
+	listCache *cache.Keyed[[]domain.Counter]
 }
 
 func NewCounterService(repo *repository.CounterRepository) *CounterService {
-	return &CounterService{repo: repo}
+	return &CounterService{repo: repo, listCache: cache.NewKeyed[[]domain.Counter]()}
 }
 
 func (s *CounterService) List(ctx context.Context) ([]domain.Counter, error) {
-	return s.repo.List(ctx)
+	const key = "all"
+	if v, ok := s.listCache.Get(key); ok {
+		return v, nil
+	}
+	v, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Set(key, v)
+	return v, nil
 }
 
 func (s *CounterService) Get(ctx context.Context, id int) (*domain.Counter, error) {
@@ -44,9 +58,14 @@ func (s *CounterService) Create(ctx context.Context, in CounterInput) (*domain.C
 	if in.Active != nil {
 		active = *in.Active
 	}
-	return s.repo.Create(ctx, repository.CounterFields{
+	created, err := s.repo.Create(ctx, repository.CounterFields{
 		Name: name, Service: svc, Active: active, StaffID: in.StaffID,
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return created, nil
 }
 
 type CounterPatchInput struct {
@@ -79,11 +98,20 @@ func (s *CounterService) Update(ctx context.Context, id int, in CounterPatchInpu
 		}
 		patch.Service = svc
 	}
-	return s.repo.Update(ctx, id, patch)
+	updated, err := s.repo.Update(ctx, id, patch)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return updated, nil
 }
 
 func (s *CounterService) Delete(ctx context.Context, id int) error {
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.listCache.Invalidate()
+	return nil
 }
 
 func normalizeService(s *string) (*string, error) {

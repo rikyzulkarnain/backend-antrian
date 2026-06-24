@@ -2,23 +2,38 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 
+	"github.com/bbpjn-sumsel/sistem-antrian/internal/cache"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/domain"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/repository"
 )
 
 type ServiceService struct {
 	repo *repository.ServiceRepository
+	// listCache serves kiosk/display polls of the (near-static) service list
+	// from memory; invalidated on any admin CRUD so Neon can stay suspended
+	// between changes. See package cache.
+	listCache *cache.Keyed[[]domain.Service]
 }
 
 func NewServiceService(r *repository.ServiceRepository) *ServiceService {
-	return &ServiceService{repo: r}
+	return &ServiceService{repo: r, listCache: cache.NewKeyed[[]domain.Service]()}
 }
 
 func (s *ServiceService) List(ctx context.Context, activeOnly bool) ([]domain.Service, error) {
-	return s.repo.List(ctx, activeOnly)
+	key := fmt.Sprintf("%t", activeOnly)
+	if v, ok := s.listCache.Get(key); ok {
+		return v, nil
+	}
+	v, err := s.repo.List(ctx, activeOnly)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Set(key, v)
+	return v, nil
 }
 
 func (s *ServiceService) Get(ctx context.Context, key string) (*domain.Service, error) {
@@ -109,7 +124,7 @@ func (s *ServiceService) Create(ctx context.Context, in ServiceCreateInput) (*do
 			qr = &v
 		}
 	}
-	return s.repo.Create(ctx, repository.ServiceCreate{
+	created, err := s.repo.Create(ctx, repository.ServiceCreate{
 		Key:          key,
 		Code:         code,
 		Name:         name,
@@ -125,10 +140,19 @@ func (s *ServiceService) Create(ctx context.Context, in ServiceCreateInput) (*do
 		IsActive:     in.IsActive,
 		DisplayOrder: in.DisplayOrder,
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return created, nil
 }
 
 func (s *ServiceService) Delete(ctx context.Context, key string) error {
-	return s.repo.Delete(ctx, key)
+	if err := s.repo.Delete(ctx, key); err != nil {
+		return err
+	}
+	s.listCache.Invalidate()
+	return nil
 }
 
 type ServicePatchInput struct {
@@ -254,5 +278,10 @@ func (s *ServiceService) Update(ctx context.Context, key string, in ServicePatch
 		}
 	}
 
-	return s.repo.Update(ctx, key, patch)
+	updated, err := s.repo.Update(ctx, key, patch)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return updated, nil
 }

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
+	"github.com/bbpjn-sumsel/sistem-antrian/internal/cache"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/domain"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/repository"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/sse"
@@ -12,14 +14,37 @@ import (
 type QueueService struct {
 	repo   queueStore
 	broker sse.Publisher
+	// listCache serves the high-frequency board polls (Display TV / kiosk hit
+	// GET /queues on an interval). It is invalidated on every mutation, so
+	// quiet periods serve from memory and never wake the Neon compute. See
+	// package cache for the rationale.
+	listCache *cache.Keyed[[]domain.Queue]
 }
 
 func NewQueueService(repo queueStore, broker sse.Publisher) *QueueService {
-	return &QueueService{repo: repo, broker: broker}
+	return &QueueService{
+		repo:      repo,
+		broker:    broker,
+		listCache: cache.NewKeyed[[]domain.Queue](),
+	}
 }
 
 func (s *QueueService) List(ctx context.Context, f repository.ListFilter) ([]domain.Queue, error) {
-	return s.repo.List(ctx, f)
+	key := listFilterKey(f)
+	if v, ok := s.listCache.Get(key); ok {
+		return v, nil
+	}
+	v, err := s.repo.List(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Set(key, v)
+	return v, nil
+}
+
+// listFilterKey produces a stable cache key for a ListFilter.
+func listFilterKey(f repository.ListFilter) string {
+	return fmt.Sprintf("%s|%s|%t|%d", f.Status, f.ServiceType, f.Active, f.Limit)
 }
 
 func (s *QueueService) Get(ctx context.Context, id string) (*domain.Queue, error) {
@@ -35,6 +60,7 @@ func (s *QueueService) Create(ctx context.Context, serviceType string) (*domain.
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.created", q)
 	return q, nil
 }
@@ -61,6 +87,7 @@ func (s *QueueService) CreateGuest(ctx context.Context, in domain.GuestInput) (*
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.created", q)
 	return q, nil
 }
@@ -104,6 +131,7 @@ func (s *QueueService) CallNext(ctx context.Context, counterID int, userID, role
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.called", q)
 	return q, nil
 }
@@ -129,6 +157,7 @@ func (s *QueueService) Recall(ctx context.Context, id string) (*domain.Queue, er
 	default:
 		return nil, domain.ErrConflict
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.called", q)
 	return q, nil
 }
@@ -141,6 +170,7 @@ func (s *QueueService) Complete(ctx context.Context, id string) (*domain.Queue, 
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.completed", q)
 	return q, nil
 }
@@ -152,6 +182,7 @@ func (s *QueueService) Skip(ctx context.Context, id string) (*domain.Queue, erro
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.skipped", q)
 	return q, nil
 }
@@ -178,6 +209,7 @@ func (s *QueueService) Rate(ctx context.Context, id string, in domain.RateInput)
 	if err != nil {
 		return nil, err
 	}
+	s.listCache.Invalidate()
 	sse.PublishJSON(s.broker, "queue.rated", q)
 	return q, nil
 }

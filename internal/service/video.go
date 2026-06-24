@@ -9,12 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bbpjn-sumsel/sistem-antrian/internal/cache"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/domain"
 	"github.com/bbpjn-sumsel/sistem-antrian/internal/repository"
 )
 
 type VideoService struct {
 	repo *repository.VideoRepository
+
+	// listCache serves the playlist polls (kiosk/display refresh every few
+	// minutes) from memory; invalidated on admin CRUD so the DB can stay
+	// suspended between changes. See package cache.
+	listCache *cache.Keyed[[]domain.Video]
 
 	// Cloudinary credentials for signed direct uploads.
 	cloudinaryAPIKey    string
@@ -33,7 +39,7 @@ type CloudinaryConfig struct {
 }
 
 func NewVideoService(repo *repository.VideoRepository) *VideoService {
-	return &VideoService{repo: repo}
+	return &VideoService{repo: repo, listCache: cache.NewKeyed[[]domain.Video]()}
 }
 
 // WithCloudinary sets the Cloudinary credentials used by UploadSignature.
@@ -51,7 +57,15 @@ func (s *VideoService) List(ctx context.Context, target string) ([]domain.Video,
 	if target != "" && target != "kiosk" && target != "display" && target != "both" {
 		return nil, domain.ErrInvalidInput
 	}
-	return s.repo.List(ctx, target)
+	if v, ok := s.listCache.Get(target); ok {
+		return v, nil
+	}
+	v, err := s.repo.List(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Set(target, v)
+	return v, nil
 }
 
 func (s *VideoService) Get(ctx context.Context, id string) (*domain.Video, error) {
@@ -96,11 +110,16 @@ func (s *VideoService) Create(ctx context.Context, in VideoInput) (*domain.Video
 	if in.IsActive != nil {
 		active = *in.IsActive
 	}
-	return s.repo.Create(ctx, repository.VideoFields{
+	created, err := s.repo.Create(ctx, repository.VideoFields{
 		Title: title, URL: url, TargetScreen: target,
 		DurationSeconds: in.DurationSeconds, DisplayOrder: order,
 		IsActive: active, UploadedBy: in.UploadedBy,
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return created, nil
 }
 
 type VideoPatchInput struct {
@@ -141,11 +160,20 @@ func (s *VideoService) Update(ctx context.Context, id string, in VideoPatchInput
 		}
 		patch.TargetScreen = &t
 	}
-	return s.repo.Update(ctx, id, patch)
+	updated, err := s.repo.Update(ctx, id, patch)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Invalidate()
+	return updated, nil
 }
 
 func (s *VideoService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.listCache.Invalidate()
+	return nil
 }
 
 // UploadSignature produces parameters the browser uses to POST directly to

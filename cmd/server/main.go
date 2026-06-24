@@ -29,7 +29,22 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("db config", "err", err)
+		os.Exit(1)
+	}
+	// Tuned for a Neon (serverless) Postgres that bills per compute-hour and
+	// auto-suspends when idle. Keep MinConns at 0 and release idle connections
+	// quickly so the pool doesn't pin an open connection that keeps the compute
+	// awake during quiet periods. MaxConns is modest — this workload is small
+	// and bursty, not connection-hungry.
+	poolCfg.MinConns = 0
+	poolCfg.MaxConns = 10
+	poolCfg.MaxConnIdleTime = 1 * time.Minute
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		slog.Error("db connect", "err", err)
 		os.Exit(1)
