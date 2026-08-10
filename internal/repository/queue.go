@@ -93,6 +93,22 @@ func (r *QueueRepository) List(ctx context.Context, f ListFilter) ([]domain.Queu
 	return out, rows.Err()
 }
 
+// Last returns the most recently finished ticket (completed or skipped) so the
+// Display TV can keep showing the previous number when nothing is active,
+// instead of an empty board. Returns domain.ErrNotFound when no ticket has
+// ever been finished.
+func (r *QueueRepository) Last(ctx context.Context) (*domain.Queue, error) {
+	row := r.db.QueryRow(ctx, queueSelect+`
+WHERE q.status IN ('completed','skipped')
+ORDER BY COALESCE(q.completed_at, q.called_at, q.created_at) DESC
+LIMIT 1`)
+	q, err := scanQueue(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return q, err
+}
+
 func (r *QueueRepository) Get(ctx context.Context, id string) (*domain.Queue, error) {
 	row := r.db.QueryRow(ctx, queueSelect+" WHERE q.id = $1", id)
 	q, err := scanQueue(row)

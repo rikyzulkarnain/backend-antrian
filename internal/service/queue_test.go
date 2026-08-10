@@ -20,6 +20,7 @@ type fakeQueueStore struct {
 	updated      *domain.Queue
 	rated        *domain.Queue
 	gotByID      *domain.Queue
+	lastFinished *domain.Queue
 	counterStaff *string
 	createErr    error
 	guestCreErr  error
@@ -30,6 +31,7 @@ type fakeQueueStore struct {
 	rateErr      error
 	getErr       error
 	listErr      error
+	lastErr      error
 
 	lastGuestInput    domain.GuestInput
 	lastGuestToken    string
@@ -47,6 +49,12 @@ type fakeQueueStore struct {
 
 func (f *fakeQueueStore) List(_ context.Context, _ repository.ListFilter) ([]domain.Queue, error) {
 	return nil, f.listErr
+}
+func (f *fakeQueueStore) Last(_ context.Context) (*domain.Queue, error) {
+	if f.lastErr != nil {
+		return nil, f.lastErr
+	}
+	return f.lastFinished, nil
 }
 func (f *fakeQueueStore) Get(_ context.Context, _ string) (*domain.Queue, error) {
 	if f.getErr != nil {
@@ -452,5 +460,65 @@ func TestQueueService_Rate_HappyPath(t *testing.T) {
 	}
 	if got := broker.names(); len(got) != 1 || got[0] != "queue.rated" {
 		t.Errorf("events = %v", got)
+	}
+}
+
+func TestQueueService_Last_ReturnsMostRecentFinished(t *testing.T) {
+	store := &fakeQueueStore{lastFinished: &domain.Queue{ID: "q9", QueueNumber: "A-18"}}
+	svc, _ := newQueueSvc(store)
+
+	q, err := svc.Last(context.Background())
+	if err != nil {
+		t.Fatalf("Last: %v", err)
+	}
+	if q.QueueNumber != "A-18" {
+		t.Errorf("QueueNumber = %q, want A-18", q.QueueNumber)
+	}
+}
+
+func TestQueueService_Last_PropagatesNotFound(t *testing.T) {
+	store := &fakeQueueStore{lastErr: domain.ErrNotFound}
+	svc, _ := newQueueSvc(store)
+
+	if _, err := svc.Last(context.Background()); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// A board with nothing served yet polls this endpoint repeatedly; the empty
+// answer must be cached too, or every poll wakes the database.
+func TestQueueService_Last_CachesTheEmptyAnswer(t *testing.T) {
+	store := &fakeQueueStore{lastErr: domain.ErrNotFound}
+	svc, _ := newQueueSvc(store)
+
+	if _, err := svc.Last(context.Background()); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("first call: want ErrNotFound, got %v", err)
+	}
+	store.lastErr = nil
+	store.lastFinished = &domain.Queue{ID: "q9", QueueNumber: "A-18"}
+	if _, err := svc.Last(context.Background()); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second call should be served from cache, got %v", err)
+	}
+}
+
+func TestQueueService_Last_CacheInvalidatedByMutation(t *testing.T) {
+	store := &fakeQueueStore{lastFinished: &domain.Queue{ID: "q1", QueueNumber: "A-01"}}
+	svc, _ := newQueueSvc(store)
+
+	if _, err := svc.Last(context.Background()); err != nil {
+		t.Fatalf("warm cache: %v", err)
+	}
+	store.created = &domain.Queue{ID: "q2", QueueNumber: "A-02"}
+	if _, err := svc.Create(context.Background(), "UMUM"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	store.lastFinished = &domain.Queue{ID: "q2", QueueNumber: "A-02"}
+
+	q, err := svc.Last(context.Background())
+	if err != nil {
+		t.Fatalf("Last after mutation: %v", err)
+	}
+	if q.QueueNumber != "A-02" {
+		t.Errorf("QueueNumber = %q, want A-02 (cache should have been invalidated)", q.QueueNumber)
 	}
 }

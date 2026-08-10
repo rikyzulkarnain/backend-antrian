@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -45,6 +46,29 @@ func (s *QueueService) List(ctx context.Context, f repository.ListFilter) ([]dom
 // listFilterKey produces a stable cache key for a ListFilter.
 func listFilterKey(f repository.ListFilter) string {
 	return fmt.Sprintf("%s|%s|%t|%d", f.Status, f.ServiceType, f.Active, f.Limit)
+}
+
+// Last returns the most recently finished ticket. Shares listCache (and so its
+// invalidation on every mutation) because the answer only changes when a ticket
+// changes status.
+func (s *QueueService) Last(ctx context.Context) (*domain.Queue, error) {
+	const key = "last"
+	if v, ok := s.listCache.Get(key); ok {
+		if len(v) == 0 {
+			return nil, domain.ErrNotFound
+		}
+		return &v[0], nil
+	}
+	q, err := s.repo.Last(ctx)
+	if errors.Is(err, domain.ErrNotFound) {
+		s.listCache.Set(key, nil)
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.listCache.Set(key, []domain.Queue{*q})
+	return q, nil
 }
 
 func (s *QueueService) Get(ctx context.Context, id string) (*domain.Queue, error) {

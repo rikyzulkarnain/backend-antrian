@@ -85,6 +85,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) (chi.Router, *Deps) {
 
 		// Public reads (kiosk + display TV consume without auth).
 		r.Get("/queues", queueH.List)
+		r.Get("/queues/last", queueH.Last)
 		r.Get("/queues/{id}", queueH.Get)
 		r.Post("/queues", queueH.Create)
 		r.Post("/queues/guest", queueH.CreateGuest)

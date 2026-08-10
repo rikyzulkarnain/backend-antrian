@@ -19,6 +19,7 @@ type authUsers interface {
 // structurally so main.go wiring needs no change.
 type queueStore interface {
 	List(ctx context.Context, f repository.ListFilter) ([]domain.Queue, error)
+	Last(ctx context.Context) (*domain.Queue, error)
 	Get(ctx context.Context, id string) (*domain.Queue, error)
 	Create(ctx context.Context, serviceType string) (*domain.Queue, error)
 	CreateGuest(ctx context.Context, in domain.GuestInput) (*domain.Queue, error)

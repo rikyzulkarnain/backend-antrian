@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +34,23 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok(w, items)
+}
+
+// Last serves the most recently finished ticket so the Display TV can show the
+// previous number when no ticket is active. Responds with a null payload rather
+// than 404 when nothing has been served yet — an empty board is a normal state,
+// not an error the screen should surface.
+func (h *QueueHandler) Last(w http.ResponseWriter, r *http.Request) {
+	q, err := h.svc.Last(r.Context())
+	if errors.Is(err, domain.ErrNotFound) {
+		ok(w, nil)
+		return
+	}
+	if err != nil {
+		renderDomainError(w, err)
+		return
+	}
+	ok(w, q)
 }
 
 func (h *QueueHandler) Get(w http.ResponseWriter, r *http.Request) {
